@@ -18,19 +18,18 @@
 # 5.检查出错,返回5;
 # 6.上了WEB专区,但不在WEB上下线,检查代理——检查VIP,类型为6,返回6 or 1 or 2
  
-#时间差计算
+# 时间差计算
 function getTiming()
 {
-  start=$1
-  end=$2
- 
-  start_s=$(echo "$start" | cut -d '.' -f 1)
-  start_ns=$(echo "$start" | cut -d '.' -f 2)
-  end_s=$(echo "$end" | cut -d '.' -f 1)
-  end_ns=$(echo "$end" | cut -d '.' -f 2)
- 
-  time_micro=$(( (10#$end_s-10#$start_s)*1000000 + (10#$end_ns/1000 - 10#$start_ns/1000) ))
-  time_ms=$(expr $time_micro/1000 | bc)
+  local start=$1
+  local end=$2
+
+  local start_s=$(echo "$start" | cut -d '.' -f 1)
+  local start_ns=$(echo "$start" | cut -d '.' -f 2)
+  local end_s=$(echo "$end" | cut -d '.' -f 1)
+  local end_ns=$(echo "$end" | cut -d '.' -f 2)
+  local time_micro=$(( (10#$end_s-10#$start_s)*1000000 + (10#$end_ns/1000 - 10#$start_ns/1000) ))
+  local time_ms=$(expr $time_micro/1000 | bc)
  
   echo "${time_ms}ms"
  
@@ -306,11 +305,25 @@ function getSourceServerIP()
 function getCDNCooperater()
 {
   local CNAME=$1;
-  local Cooper="";Cooper=$(echo "${CNAME}"|awk -F "." '{print $(NF-1)}');
+  local Cooper="";Cooper=$(echo "${CNAME}"|awk -F "." '{print $(NF-1)"."$NF}');
   case "${Cooper}" in
-      wscdns|wsglb0|cdn20)  echo "网宿"
+      cdn20.com|wscdns.com|wsdvs.com|wsglb0.com)  echo "网宿"
       ;;
-      cloudglb)  echo "快网"
+      cloudglb.com|cloudcdn.net|cachecn.com|fwcdn.com)  echo "快网"
+      ;;
+      kunlungr.com|kunlunpi.com|kunlunle.com|kunlunhuf.com|kunlunea.com|alikunlun.net|kunlunno.com|kunlunca.com) echo "阿里"
+      ;;
+      xgslb.net)  echo "蓝汛"
+      ;;
+      fastcdn.com)  echo "帝联"
+      ;;
+      vdncloud.com)  echo "视界云"
+      ;;
+      dnsv1.com)  echo "腾讯云"
+      ;;
+      cdndo.com)  echo "UCloud"
+      ;;
+      bdydns.com)  echo "百度云"
       ;;
       "")  echo "未知"
       ;;
@@ -319,6 +332,33 @@ function getCDNCooperater()
   esac
  
 }
+
+#根据IP，获取机器负责人信息
+function get_tech_admin()
+{
+  #注意url参数中是否有+、空格、=、%、&、#等特殊符号
+  local IP="$1"
+  #要执行的脚本ID
+  local shellId="106001"
+  local URL="http://ido.sysop.duowan.com/intf/exeShellIntf.jsp"
+  local queryData="pass=c5d2fe07e5460ed18d96379d420b8c38&dwName=dw_fanweirui&shellId=${shellId}&ips=${IP}&taskName=${IP}"
+  local curldata=$(curl -s -m 3 --retry 1 "${URL}?${queryData}" 2>/dev/null);
+  local queue="server_info"
+  for (( i=0;i<5;i++ ))
+  do
+    sleep 1
+    local server_json=$(curl -m 3 "http://183.136.136.18:1218/?charset=utf-8&name=${queue}&opt=get&auth=yysec123456")
+    if [ ! "$server_json" = "HTTPMQ_GET_END" ];then
+      echo $(echo "$server_json"|jq .responsibleAdmin_dw|sed 's!"!!g')
+      return
+    fi
+  done
+  echo "接口获取信息失败"
+  # [ -n "$server_json" ] && echo $(echo "$getjson"|jq .responsibleAdmin_dw|sed 's!"!!g')
+}
+
+#CDN后缀名
+#CDNsuffix="cdn20.com wscdns.com wsdvs.com wsglb0.com kunlungr.com kunlunpi.com kunlunle.com kunlunhuf.com kunlunea.com alikunlun.net kunlunno.com kunlunca.com cloudglb.com cloudcdn.net cachecn.com fwcdn.com vdncloud.com fastcdn.com xgslb.net bdydns.com dnsv1.com cdndo.com"
 #临时文件记录返回码、服务器检测、服务器状态
 temp_file=$(mktemp)
 mail_file=$(mktemp)
@@ -381,13 +421,14 @@ if [ ${#vipList[@]} -eq 0 ]
   then
   checkmsg=$(echo -e "{\"type\":5,\"ips\":\"获取VIP信息失败，请重试\"}");
 fi
+
 #判断是否CNAME到了别的域名，而不是CDN
 if [ "${dnsArray[0]}" = "CNAME" ]
   then
   cnameDomain=$(echo "${dnsArray[1]}"|sed 's/\.$//');
-  comCount=$(echo "${cnameDomain}"|grep -o ".com"|wc -l);
-  #".com"个数大于等于2，则上了CDN，小于2则没上
-  if [[ $comCount -lt 2 ]]
+  CDNCooper=$(getCDNCooperater "$cnameDomain")
+  # 判断是否是上了CDN
+  if [[ "$CDNCooper" == "其他" ]]
     then
     dnsArray=($(getDNSIP "${cnameDomain}"));
     domainCname=$cnameDomain;
@@ -745,7 +786,6 @@ realServer40x=();rServerErrorIps=();nginx403=();lvsErrorIps=();nginx404=()
 realServer40x=($(echo "$rserverCodeList"|awk '{if($2~/^40[3-4]/) {print $1}}'));
 rServerErrorIps=($(echo "$rserverCodeList"|awk '{if($2!~/^[2-4]0[0-4]$/) print $1}'));
 [[ "$Nginxnum" = "1" ]] && nginx403=($(echo "$nginxCodeList"|awk '{if($2~/^403/) print $1}'));
-# [[ "$Nginxnum" = "1" ]] && lvsErrorIps=($(echo "$lvsCodeList"|awk '{if($2!~/^[2-4]0[0-4]$/) print $1}'));
 [[ "$Nginxnum" = "1" ]] && lvsErrorIps=($(echo "$lvsCodeList"|awk '{if($2!~/^[2-3]0[0-4]$/) print $1}'));
 [[ "$Nginxnum" = "1" ]] && nginx404=($(echo "$nginxCodeList"|awk '{if($2~/^404/) print $1}'));
  
@@ -788,9 +828,9 @@ function DNSInfoOutput(){
     do
       echo $ip
     done
-    if [[ $comCount -ge 2 ]]
+    if [[ ! "$CDNCooper" == "其他" ]]
       then
-      echo "归属厂商：$(getCDNCooperater "$cnameDomain")";
+      echo "归属厂商：$CDNCooper";
       #echo "http://cdn.sysop.duowan.com/admin/cdn/domain_cname.jsp?domain=${domainCname}";
       echo "源站为："
       for ip in ${sourceArray[*]}
